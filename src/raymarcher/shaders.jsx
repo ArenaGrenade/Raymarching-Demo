@@ -71,16 +71,19 @@ export const fragmentShader = `
         return 0.5 * log(r) * r / dr;
     }
 
-    float smoothMin(float distA, float distB, float k) {
-        float h = max(k - abs(distA - distB), 0.0) / k;
-        return min(distA, distB) - h * h * h * k * 1.0 / 6.0;
-    }
+    /*
+    float smoothMin(vec4 objA, vec4 objB, float k) {
+        float h = max(k - abs(objA.x - objB.x), 0.0) / k;
+        float distance = min(objA, objB) - h * h * h * k * 1.0 / 6.0;
+        vec3 color = lerp(objA.yzw, objB.yzw, h);
+        return vec4(distance, color);
+    }*/
 
     vec3 transformPoint(vec3 p) {
         return (invTransformMat * vec4(p, 1.0)).xyz;
     }
 
-    float GetSceneDist(vec3 p) {
+    vec4 GetSceneDist(vec3 p) {
         // float box = signedDistToBox(p, vec3(-1.5, 1, 6), vec3(1));
         // float sphere = signedDistToSphere(p, vec4(1.5, 1, 6, 1));
         // float plane = signedDistToPlane(p);
@@ -88,33 +91,39 @@ export const fragmentShader = `
         // float roundedBox = signedDistToRoundedbox(p, vec3(-1.5, 1, 6), vec3(1), 0.0);
 
         vec3 transformed = transformPoint(p);
-        float mandelBulb = signedDistToMandelBulb(transformed);
+        vec4 mandelBulb = vec4(signedDistToMandelBulb(transformed), vec3(0.0, 0.42, 0.22));
 
         return mandelBulb;
     }
 
-    float RayMarch(vec3 ro, vec3 rd) {
+    vec4 RayMarch(vec3 ro, vec3 rd) {
         float d0 = 0.0;
+        vec3 c = vec3(0.0);
 
         for (int i = 0; i < MAX_STEPS; i++) {
             vec3 p = ro + rd * d0;
-            float dS = GetSceneDist(p);
-            d0 += dS;
+            vec4 objF = GetSceneDist(p);
+            d0 += objF.x;
+            c = objF.yzw;
 
-            if (d0 > MAX_DIST || abs(dS) < SURF_DIST) break;
+            if (d0 > MAX_DIST) {
+                c = vec3(0.0);
+                break;
+            }
+            if (abs(objF.x) < SURF_DIST) break;
         }
 
-        return d0;
+        return vec4(d0, c);
     }
 
     vec3 CalculateNormal (vec3 p) {
-        float d = GetSceneDist(p);
+        vec4 d = GetSceneDist(p);
         vec2 e = vec2(0.01, 0);
 
-        vec3 n = d - vec3(
-            GetSceneDist(p - e.xyy),
-            GetSceneDist(p - e.yxy),
-            GetSceneDist(p - e.yyx)
+        vec3 n = d.x - vec3(
+            GetSceneDist(p - e.xyy).x,
+            GetSceneDist(p - e.yxy).x,
+            GetSceneDist(p - e.yyx).x
         );
 
         return normalize(n);
@@ -128,10 +137,10 @@ export const fragmentShader = `
 
         float diffuse = clamp(dot(n, l), 0.0, 1.0);
 
-        float d = RayMarch(p + n * SURF_DIST * 2.0, l);
-        if (d < length(lightPos - p)) diffuse *= 0.1;
+        vec4 d = RayMarch(p + n * SURF_DIST * 2.0, l);
+        if (d.x < length(lightPos - p)) diffuse *= 0.1;
 
-        return diffuse;
+        return (diffuse - 0.5) * 0.7;
     }
 
     void main(void) {
@@ -146,11 +155,13 @@ export const fragmentShader = `
 
         // Cast the ray and calculate the color
         vec3 col = vec3(0.0);
-        float d = RayMarch(cPos, ray);
+        vec4 final_obj = RayMarch(cPos, ray);
+        col = final_obj.yzw;
+        float d = final_obj.x;
 
         vec3 p = cPos + ray * d;
         float litColor = CalculateLighting(p);
-        col = vec3(litColor);
+        col += vec3(litColor);
 
         gl_FragColor = vec4(col, 1.0);
     }
